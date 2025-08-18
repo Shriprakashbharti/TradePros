@@ -5,7 +5,21 @@ const schema = new mongoose.Schema(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true, index: true, lowercase: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ['user', 'admin'], default: 'user', index: true }
+    role: { type: String, enum: ['user', 'admin'], default: 'user', index: true },
+    balance: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    reservedBalance: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    transactions: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Transaction'
+    }]
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
 );
