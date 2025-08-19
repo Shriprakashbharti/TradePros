@@ -9,7 +9,12 @@ const schema = new mongoose.Schema(
     price: { type: Number },
     qty: { type: Number, required: true },
     status: { type: String, enum: ['OPEN', 'PARTIAL', 'FILLED', 'CANCELLED'], default: 'OPEN', index: true },
-    filledQty: { type: Number, default: 0 }
+    filledQty: { type: Number, default: 0 },
+    reservedAmount: { type: Number, default: 0 }, // amount of user's funds held for THIS order
+    reservedQty:{
+      type:Number,
+      default:0
+    }
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
 );

@@ -139,10 +139,20 @@ export default function Portfolio() {
             ) : (
               <>
                 {activeView === 'holdings' && (
-                  <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <PortfolioCards holdings={portfolioData.holdings} />
-                  </div>
-                )}
+  <div className="bg-white shadow rounded-lg overflow-hidden">
+    <PortfolioCards 
+      holdings={portfolioData.holdings}
+      summary={{
+        totalValue: portfolioData.totalValue,
+        totalUnrealized: portfolioData.unrealizedPL,
+        positionsCount: portfolioData.holdings?.length || 0,
+        dayChange: portfolioData.todayChange?.amount || 0
+      }}
+      loading={isLoading}
+      error={null} // You can add error state if needed
+    />
+  </div>
+)}
 
                 {activeView === 'performance' && (
                   <div className="bg-white shadow rounded-lg p-6">

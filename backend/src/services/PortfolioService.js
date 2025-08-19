@@ -3,60 +3,62 @@ import User from '../models/User.js';
 import Position from '../models/Position.js';
 import Candle from '../models/Candle.js';
 import mongoose from 'mongoose';
+
 const ObjectId = mongoose.Types.ObjectId;
 
-export default {
-    async getPortfolioData(userId, range = '1M') {
-        try {
-          // Validate inputs
-          if (!ObjectId.isValid(userId)) {
-            throw new Error('Invalid user ID format');
-          }
-    
-          // Get user with balance
-          const user = await User.findById(userId).select('balance').lean();
-          if (!user) {
-            throw new Error('User not found');
-          }
-    
-          // Calculate date range
-          const dateRange = this.calculateDateRange(range);
-    
-          // Get recent transactions
-          const transactions = await Transaction.find({
-            userId: new ObjectId(userId),
-            createdAt: { $gte: dateRange },
-            status: 'FILLED'
-          })
-          .sort({ createdAt: -1 })
-          .limit(5)
-          .lean();
-    
-          // Calculate holdings from positions
-          const holdings = await this.calculateHoldings(userId);
-    
-          // Calculate portfolio metrics
-          const totalValue = holdings.reduce((sum, h) => sum + h.currentValue, 0) + (user.balance || 0);
-          const todayChange = await this.calculateDailyChange(userId, holdings);
-    
-          return {
-            totalValue,
-            todayChange,
-            unrealizedPL: holdings.reduce((sum, h) => sum + h.unrealizedPL, 0),
-            holdings,
-            recentActivity: transactions.map(t => ({
-              description: `${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.symbol}`,
-              amount: t.quantity * t.price,
-              timestamp: t.createdAt
-            })),
-            cashBalance: user.balance || 0
-          };
-    
-        } catch (error) {
-          console.error('Error in portfolioService:', error);
-          throw error;
-        }
-      },
+class PortfolioService {
+  async getPortfolioData(userId, range = '1M') {
+    try {
+      
+      // Validate inputs
+      if (!ObjectId.isValid(userId)) {
+        throw new Error('Invalid user ID format');
+      }
+
+      // Get user with balance
+      const user = await User.findById(userId).select('balance').lean();
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Calculate date range
+      const dateRange = this.calculateDateRange(range);
+
+      // Get recent transactions
+      const transactions = await Transaction.find({
+        userId: new ObjectId(userId),
+        createdAt: { $gte: dateRange },
+        status: 'completed' // Changed from 'FILLED' to match your Transaction model
+      })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+
+      // Calculate holdings from positions
+      const holdings = await this.calculateHoldings(userId);
+
+      // Calculate portfolio metrics
+      const totalValue = holdings.reduce((sum, h) => sum + h.currentValue, 0) + (user.balance || 0);
+      const todayChange = await this.calculateDailyChange(userId, holdings);
+
+      return {
+        totalValue,
+        todayChange,
+        unrealizedPL: holdings.reduce((sum, h) => sum + h.unrealizedPL, 0),
+        holdings,
+        recentActivity: transactions.map(t => ({
+          description: `${t.type === 'trade' ? (t.side === 'BUY' ? 'Bought' : 'Sold') : t.type} ${t.symbol || ''}`,
+          amount: t.amount || (t.quantity * t.price || 0),
+          timestamp: t.createdAt
+        })),
+        cashBalance: user.balance || 0
+      };
+
+    } catch (error) {
+      console.error('Error in portfolioService:', error);
+      throw error;
+    }
+  }
 
   calculateDateRange(range) {
     const now = new Date();
@@ -66,9 +68,10 @@ export default {
       case '1M': return new Date(now.setMonth(now.getMonth() - 1));
       case '3M': return new Date(now.setMonth(now.getMonth() - 3));
       case '1Y': return new Date(now.setFullYear(now.getFullYear() - 1));
-      default: return new Date(0);
+      case 'ALL': return new Date(0);
+      default: return new Date(now.setMonth(now.getMonth() - 1));
     }
-  },
+  }
 
   async calculateHoldings(userId) {
     try {
@@ -112,7 +115,7 @@ export default {
       console.error('Error calculating holdings:', error);
       throw new Error('Failed to calculate holdings');
     }
-  },
+  }
 
   async calculateDailyChange(userId, holdings) {
     try {
@@ -169,18 +172,18 @@ export default {
         percentage: 0
       };
     }
-  },
+  }
 
   // Additional helper method to get portfolio history for charts
   async getPortfolioHistory(userId, range = '1M') {
     try {
       const dateRange = this.calculateDateRange(range);
       
-      // Get all positions over time
+      // Get all transactions over time
       const transactions = await Transaction.find({
         userId: new ObjectId(userId),
         createdAt: { $gte: dateRange },
-        status: 'FILLED'
+        status: 'completed'
       })
       .sort({ createdAt: 1 })
       .lean();
@@ -205,18 +208,18 @@ export default {
         }
 
         // Update holdings based on transaction
-        if (tx.side === 'BUY') {
-          currentCash -= tx.quantity * tx.price;
+        if (tx.type === 'trade' && tx.side === 'BUY') {
+          currentCash -= tx.amount || (tx.quantity * tx.price);
           const existing = currentHoldings.get(tx.symbol) || { qty: 0, cost: 0 };
           currentHoldings.set(tx.symbol, {
-            qty: existing.qty + tx.quantity,
-            cost: existing.cost + (tx.quantity * tx.price)
+            qty: existing.qty + (tx.quantity || 0),
+            cost: existing.cost + (tx.amount || (tx.quantity * tx.price))
           });
-        } else if (tx.side === 'SELL') {
-          currentCash += tx.quantity * tx.price;
+        } else if (tx.type === 'trade' && tx.side === 'SELL') {
+          currentCash += tx.amount || (tx.quantity * tx.price);
           const existing = currentHoldings.get(tx.symbol);
           if (existing) {
-            const remainingQty = existing.qty - tx.quantity;
+            const remainingQty = existing.qty - (tx.quantity || 0);
             if (remainingQty <= 0) {
               currentHoldings.delete(tx.symbol);
             } else {
@@ -226,6 +229,10 @@ export default {
               });
             }
           }
+        } else if (tx.type === 'deposit') {
+          currentCash += tx.amount;
+        } else if (tx.type === 'withdrawal') {
+          currentCash -= tx.amount;
         }
       }
 
@@ -234,7 +241,7 @@ export default {
       console.error('Error getting portfolio history:', error);
       throw error;
     }
-  },
+  }
 
   async calculateDayValue(holdings, date, cashBalance) {
     try {
@@ -257,7 +264,10 @@ export default {
       return totalValue;
     } catch (error) {
       console.error('Error calculating day value:', error);
-      return 0;
+      return cashBalance;
     }
   }
-};
+}
+
+// Export an instance of the service
+export default new PortfolioService();

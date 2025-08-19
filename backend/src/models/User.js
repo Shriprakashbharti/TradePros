@@ -16,9 +16,17 @@ const schema = new mongoose.Schema(
       default: 0,
       min: 0
     },
+    isActive: {
+      type: Boolean,
+      default: true, 
+    },
     transactions: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Transaction'
+    }],
+    orders: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Order'
     }]
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }

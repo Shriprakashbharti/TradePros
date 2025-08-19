@@ -2,6 +2,8 @@ import Order from '../models/Order.js';
 import Trade from '../models/Trade.js';
 import Position from '../models/Position.js';
 import { ws } from '../index.js';
+import User from '../models/User.js';
+import Instrument from "../models/Instrument.js";
 
 const books = new Map(); // symbol -> { buys: [], sells: [] }
 
@@ -35,90 +37,265 @@ function obSnapshot(symbol, depth = 10) {
   };
 }
 
-async function updatePosition(userId, symbol, side, price, qty) {
-  const pos = await Position.findOne({ user: userId, symbol });
-  const signed = side === 'BUY' ? qty : -qty;
-  if (!pos) return Position.create({ user: userId, symbol, qty: signed, avgPrice: price, unrealizedPnL: 0, realizedPnL: 0 });
-  const newQty = pos.qty + signed;
-  if (pos.qty === 0 || Math.sign(pos.qty) === Math.sign(newQty)) {
-    const totalCost = pos.avgPrice * Math.abs(pos.qty) + price * qty;
-    const totalQty = Math.abs(pos.qty) + qty;
-    pos.avgPrice = totalQty ? totalCost / totalQty : 0;
-    pos.qty = newQty;
-  } else {
-    const closingQty = Math.min(Math.abs(pos.qty), qty);
-    const pnl = (price - pos.avgPrice) * (pos.qty > 0 ? closingQty : -closingQty);
-    pos.realizedPnL += pnl;
-    pos.qty = newQty;
-    if (pos.qty === 0) pos.avgPrice = 0;
+/** --- FILL HELPERS --- **/
+
+async function creditOrRefundAfterBuyFill(user, order) {
+  // Refund leftover hold for THIS order only
+  if (order.reservedAmount > 0) {
+    const refund = Math.max(0, order.reservedAmount);
+    user.balance += refund;
+    // Don't let reservedBalance go negative if concurrent updates happen
+    const release = Math.min(refund, Math.max(0, user.reservedBalance));
+    user.reservedBalance -= release;
+    order.reservedAmount = 0;
+    await order.save();
   }
-  await pos.save();
+  await user.save();
 }
 
-async function recordTrade(order, price, qty) {
-  const trade = await Trade.create({ order: order._id, user: order.user, symbol: order.symbol, price, qty, side: order.side });
-  ws.to(`user:${order.user.toString()}`).emit('trades:updated', trade.toObject());
-  await updatePosition(order.user, order.symbol, order.side, price, qty);
+async function applyBuyFillAdjustments(user, order, execPrice, execQty) {
+  const spent = execPrice * execQty;
+
+  // Reduce global reserved by the spent part of THIS order
+  const releaseSpent = Math.min(spent, Math.max(0, user.reservedBalance));
+  user.reservedBalance -= releaseSpent;
+
+  // Reduce per-order hold
+  order.reservedAmount = Math.max(0, (order.reservedAmount || 0) - spent);
+
+  await user.save();
+  await order.save();
 }
+
+async function updatePositionAfterFill(userId, symbol, side, execPrice, execQty) {
+  let pos = await Position.findOne({ user: userId, symbol });
+  const inst = await Instrument.findOne({ symbol });
+
+  if (side === 'BUY') {
+    if (!pos) {
+      pos = await Position.create({
+        user: userId,
+        symbol,
+        qty: execQty,
+        avgPrice: execPrice,
+        unrealizedPnL: 0,
+        realizedPnL: 0,
+      });
+    } else {
+      const totalQty = pos.qty + execQty;
+      pos.avgPrice = (pos.avgPrice * pos.qty + execPrice * execQty) / totalQty;
+      pos.qty = totalQty;
+    }
+    // update unrealized PnL
+    if (inst?.lastPrice) {
+      pos.unrealizedPnL = (inst.lastPrice - pos.avgPrice) * pos.qty;
+    }
+    await pos.save();
+  } else { // SELL
+    if (pos) {
+      const pnl = (execPrice - pos.avgPrice) * execQty;
+      pos.realizedPnL += pnl;
+      pos.qty -= execQty;
+      if (pos.qty === 0) {
+        pos.avgPrice = 0;
+        pos.unrealizedPnL = 0;
+      } else if (inst?.lastPrice) {
+        pos.unrealizedPnL = (inst.lastPrice - pos.avgPrice) * pos.qty;
+      }
+      await pos.save();
+    }
+  }
+}
+
 
 async function fill(order, price, qty) {
+  // 1) Update order fill
   order.filledQty += qty;
   order.status = order.filledQty >= order.qty ? 'FILLED' : 'PARTIAL';
   await order.save();
-  await recordTrade(order, price, qty);
+
+  // 2) Balances / positions
+  const user = await User.findById(order.user);
+  if (!user) throw new Error('User not found');
+
+  if (order.side === 'BUY') {
+    // Apply spent part to reserved and per-order hold
+    await applyBuyFillAdjustments(user, order, price, qty);
+
+    // If fully filled now, refund leftover of THIS order's hold
+    if (order.status === 'FILLED') {
+      await creditOrRefundAfterBuyFill(user, order);
+    }
+  } else {
+    // SELL → credit proceeds now; do NOT reduce position at submit time
+    const proceeds = price * qty;
+    user.balance += proceeds;
+    await user.save();
+  }
+
+  // 3) Update position (final ownership)
+  await updatePositionAfterFill(order.user, order.symbol, order.side, price, qty);
+
+  // 4) Record trade
+  const trade = await Trade.create({
+    order: order._id,
+    user: order.user,
+    symbol: order.symbol,
+    price,
+    qty,
+    side: order.side,
+  });
+
+  // 5) Update last price for MARKET reference
+  await Instrument.updateOne({ symbol: order.symbol }, { $set: { lastPrice: price } });
+
+  // 6) Notify
+  ws.to(`user:${order.user.toString()}`).emit('trades:updated', trade.toObject());
 }
 
+/** --- PUBLIC API --- **/
+
 export async function submitOrder({ userId, symbol, side, type, price, qty }) {
-  const order = await Order.create({ user: userId, symbol, side, type, price, qty, status: 'OPEN', filledQty: 0 });
-  if (type === 'MARKET') {
-    await match(order, true);
-  } else {
-    addToBook(order);
-    await match(order, false);
+  const user = await User.findById(userId);
+  if (!user) throw new Error("User not found");
+
+  // Resolve price for MARKET
+  if (type === "MARKET") {
+    const inst = await Instrument.findOne({ symbol });
+    if (!inst) throw new Error("Instrument not found");
+    price = inst.lastPrice; // must be present; update on each trade in fill()
   }
-  ws.to(`user:${userId}`).emit('orders:updated', { orderId: order._id });
+
+  price = Number(price);
+  qty = Number(qty);
+  if (!Number.isFinite(price) || price <= 0) throw new Error("Invalid price");
+  if (!Number.isFinite(qty)   || qty <= 0)   throw new Error("Invalid quantity");
+
+  const requiredAmount = price * qty;
+
+  if (side === "BUY") {
+    if (user.balance < requiredAmount) throw new Error("Insufficient balance");
+    // Move funds from balance → global reserved; also record per-order hold
+    user.balance -= requiredAmount;
+    user.reservedBalance += requiredAmount;
+    await user.save();
+  } else {
+    // SELL: only validate availability; DO NOT decrement pos here
+    const pos = await Position.findOne({ user: userId, symbol });
+    if (!pos || pos.qty < qty) throw new Error("Insufficient position to sell");
+  }
+
+  // Create order (include per-order hold for BUY)
+  let order = await Order.create({
+    user: userId,
+    symbol,
+    side,
+    type,
+    price,
+    qty,
+    status: "OPEN",
+    filledQty: 0,
+    reservedAmount: side === 'BUY' ? requiredAmount : 0,
+  });
+
+  // Try to match
+  if (type === "MARKET") {
+    order = await match(order, true);
+  } else {
+    order = await match(order, false);
+    if (order.status === "OPEN" || order.status === "PARTIAL") {
+      addToBook(order);
+    }
+  }
+
+  // Finalize status consistency
+  if (order.filledQty === 0) order.status = "OPEN";
+  else if (order.filledQty < order.qty) order.status = "PARTIAL";
+  else order.status = "FILLED";
+  await order.save();
+
+  // Emit updates
+  ws.to(`user:${userId}`).emit("orders:updated", {
+    orderId: order._id,
+    status: order.status,
+    filledQty: order.filledQty
+  });
   ws.to(`symbol:${symbol}`).emit(`market:orderbook:${symbol}`, obSnapshot(symbol));
+
   return order.toObject();
 }
 
 export async function cancelOrderById(id, userId) {
   const order = await Order.findOne({ _id: id, user: userId });
   if (!order || order.status === 'FILLED' || order.status === 'CANCELLED') return false;
+
   order.status = 'CANCELLED';
   await order.save();
+
+  // Refund any leftover per-order reservation for BUY
+  if (order.side === 'BUY' && order.reservedAmount > 0) {
+    const user = await User.findById(userId);
+    if (user) {
+      user.balance += order.reservedAmount;
+      const release = Math.min(order.reservedAmount, Math.max(0, user.reservedBalance));
+      user.reservedBalance -= release;
+      await user.save();
+    }
+    order.reservedAmount = 0;
+    await order.save();
+  }
+
   removeFromBook(order.symbol, order._id);
-  ws.to(`user:${userId}`).emit('orders:updated', { orderId: id });
+  ws.to(`user:${userId}`).emit('orders:updated', { orderId: id, status: 'CANCELLED' });
   ws.to(`symbol:${order.symbol}`).emit(`market:orderbook:${order.symbol}`, obSnapshot(order.symbol));
   return true;
 }
 
 async function match(order, isMarket) {
-  const book = getBook(order.symbol);
-  const contraList = order.side === 'BUY' ? book.sells : book.buys;
-  let remaining = order.qty - order.filledQty;
-  for (let i = 0; i < contraList.length && remaining > 0; i++) {
-    const contra = contraList[i];
-    const priceOk = isMarket || (order.side === 'BUY' ? order.price >= contra.price : order.price <= contra.price);
-    if (!priceOk) break;
-    const avail = contra.qty - contra.filledQty;
-    const tQty = Math.min(remaining, avail);
-    const tPrice = contra.price || order.price || 0;
-    await fill(order, tPrice, tQty);
-    contra.filledQty += tQty;
-    contra.status = contra.filledQty >= contra.qty ? 'FILLED' : 'PARTIAL';
-    await contra.save();
-    remaining = order.qty - order.filledQty;
-    if (contra.status === 'FILLED') { removeFromBook(order.symbol, contra._id); i--; }
-  }
-  if (!isMarket && order.status !== 'FILLED') {
-    const sideList = order.side === 'BUY' ? book.buys : book.sells;
-    if (!sideList.find((o) => o._id.toString() === order._id.toString())) addToBook(order);
-  } else if (isMarket && order.status !== 'FILLED') {
-    order.status = order.filledQty > 0 ? 'PARTIAL' : 'CANCELLED';
-    await order.save();
+  try {
+    const book = getBook(order.symbol);
+    const contraList = order.side === 'BUY' ? book.sells : book.buys;
+    let remaining = order.qty - order.filledQty;
+
+    for (let i = 0; i < contraList.length && remaining > 0; i++) {
+      const contra = contraList[i];
+
+      const priceOk = isMarket || (order.side === 'BUY' ? order.price >= contra.price : order.price <= contra.price);
+      if (!priceOk) break;
+
+      const avail = contra.qty - contra.filledQty;
+      const tQty = Math.min(remaining, avail);
+      const tPrice = (typeof contra.price === 'number' && contra.price > 0) ? contra.price : order.price;
+
+      await fill(order, tPrice, tQty);
+
+      contra.filledQty += tQty;
+      contra.status = contra.filledQty >= contra.qty ? 'FILLED' : 'PARTIAL';
+      await contra.save();
+
+      remaining = order.qty - order.filledQty;
+
+      if (contra.status === 'FILLED') {
+        removeFromBook(order.symbol, contra._id);
+        i--;
+      }
+    }
+
+    if (!isMarket && order.status !== 'FILLED') {
+      const sideList = order.side === 'BUY' ? book.buys : book.sells;
+      if (!sideList.find((o) => o._id.toString() === order._id.toString())) addToBook(order);
+    } else if (isMarket && order.status !== 'FILLED') {
+      order.status = order.filledQty > 0 ? 'PARTIAL' : 'CANCELLED';
+      await order.save();
+    }
+
+    return order;
+  } catch (error) {
+    console.error('Error in match function:', error);
+    throw error;
   }
 }
 
-export function orderbookSnapshot(symbol) { return obSnapshot(symbol); }
-
-
+export function orderbookSnapshot(symbol) {
+  return obSnapshot(symbol);
+}

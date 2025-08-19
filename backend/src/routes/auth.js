@@ -34,7 +34,7 @@ router.post('/login', async (req, res) => {
   const ok = await bcrypt.compare(value.password, user.passwordHash);
   if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
   const t = tokens(user);
-  res.json({ user: { id: user._id, name: user.name, email: user.email, role: user.role }, ...t });
+  res.json({ user: { id: user._id, name: user.name, email: user.email, role: user.role,  balance: user.balance }, ...t });
 });
 
 router.post('/refresh', async (req, res) => {
@@ -62,7 +62,7 @@ router.get('/me', async (req, res) => {
     const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET || 'dev_secret');
     const user = await User.findById(payload.sub).lean();
     if (!user) return res.status(401).json({ message: 'Unauthorized' });
-    res.json({ id: user._id, name: user.name, email: user.email, role: user.role });
+    res.json({ id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance });
   } catch {
     res.status(401).json({ message: 'Unauthorized' });
   }

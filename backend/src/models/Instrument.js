@@ -6,7 +6,8 @@ const schema = new mongoose.Schema(
     name: { type: String, required: true },
     tickSize: { type: Number, required: true },
     lotSize: { type: Number, required: true },
-    active: { type: Boolean, default: true }
+    active: { type: Boolean, default: true },
+    lastPrice: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import api from '../lib/api'
 import { useMarket } from '../store/market'
 import { ArrowUpIcon, ArrowDownIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline'
-
+import { useAuth } from '../store/auth'
 export default function OrderTicket() {
   const { instruments, symbol, tick } = useMarket()
+  const { user } = useAuth()
   const [form, setForm] = useState({ 
     symbol, 
     side: 'BUY', 
@@ -41,7 +42,12 @@ export default function OrderTicket() {
       setSubmitStatus({ success: false, message: 'Please fill all required fields' })
       return
     }
-
+    const qty=Number(form.qty)
+    const actualBalance=user.balance;
+    if(actualBalance<(lastPrice*qty)) {
+      setSubmitStatus({success:false,message:'Not Enough Balance'})
+      return
+    }
     setIsSubmitting(true)
     setSubmitStatus(null)
 
@@ -54,6 +60,7 @@ export default function OrderTicket() {
       }
       
       if (form.type === 'LIMIT') {
+        
         payload.price = Number(form.price)
       }
 
