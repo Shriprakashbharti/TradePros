@@ -7,7 +7,9 @@ const schema = new mongoose.Schema(
     qty: { type: Number, default: 0 },
     avgPrice: { type: Number, default: 0 },
     unrealizedPnL: { type: Number, default: 0 },
-    realizedPnL: { type: Number, default: 0 }
+    realizedPnL: { type: Number, default: 0 },
+    reservedQty: { type: Number, default: 0 }
+
   },
   { timestamps: { updatedAt: 'updatedAt' } }
 );

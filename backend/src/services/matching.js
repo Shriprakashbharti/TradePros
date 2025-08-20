@@ -93,9 +93,15 @@ async function updatePositionAfterFill(userId, symbol, side, execPrice, execQty)
     await pos.save();
   } else { // SELL
     if (pos) {
+      // Unlock the shares that were reserved
+      pos.reservedQty = Math.max(0, pos.reservedQty - execQty);
+  
+      // Reduce actual qty now
+      pos.qty -= execQty;
+  
       const pnl = (execPrice - pos.avgPrice) * execQty;
       pos.realizedPnL += pnl;
-      pos.qty -= execQty;
+  
       if (pos.qty === 0) {
         pos.avgPrice = 0;
         pos.unrealizedPnL = 0;
@@ -180,10 +186,14 @@ export async function submitOrder({ userId, symbol, side, type, price, qty }) {
     user.reservedBalance += requiredAmount;
     await user.save();
   } else {
-    // SELL: only validate availability; DO NOT decrement pos here
+    // SELL: lock shares in reservedQty
     const pos = await Position.findOne({ user: userId, symbol });
-    if (!pos || pos.qty < qty) throw new Error("Insufficient position to sell");
+    if (!pos || pos.qty - pos.reservedQty < qty) throw new Error("Insufficient available shares to sell");
+  
+    pos.reservedQty += qty;
+    await pos.save();
   }
+  
 
   // Create order (include per-order hold for BUY)
   let order = await Order.create({
@@ -232,6 +242,7 @@ export async function cancelOrderById(id, userId) {
   order.status = 'CANCELLED';
   await order.save();
 
+  
   // Refund any leftover per-order reservation for BUY
   if (order.side === 'BUY' && order.reservedAmount > 0) {
     const user = await User.findById(userId);
@@ -243,6 +254,12 @@ export async function cancelOrderById(id, userId) {
     }
     order.reservedAmount = 0;
     await order.save();
+  }else if (order.side === 'SELL') {
+    const pos = await Position.findOne({ user: userId, symbol: order.symbol });
+    if (pos) {
+      pos.reservedQty = Math.max(0, pos.reservedQty - (order.qty - order.filledQty));
+      await pos.save();
+    }
   }
 
   removeFromBook(order.symbol, order._id);

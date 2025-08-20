@@ -9,7 +9,6 @@ import Order from "../models/Order.js";
 const router = express.Router();
 
 router.post("/", authRequired, async (req, res) => {
-  console.log("body data",req.body)
 
   try {
     const schema = Joi.object({
@@ -38,8 +37,8 @@ router.post("/", authRequired, async (req, res) => {
 
     return res.status(201).json({ order });
   } catch (err) {
-    console.error("Order creation error:", err);
-    res.status(500).json({ message: "Server error" });
+    console.error("Order creation error:", err.message);
+    res.status(500).json({ message: err.message });
   }
 });
 

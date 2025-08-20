@@ -3,62 +3,56 @@ import User from '../models/User.js';
 import Position from '../models/Position.js';
 import Candle from '../models/Candle.js';
 import mongoose from 'mongoose';
+import Trade from '../models/Trade.js'; 
 
 const ObjectId = mongoose.Types.ObjectId;
 
 class PortfolioService {
-  async getPortfolioData(userId, range = '1M') {
-    try {
-      
-      // Validate inputs
-      if (!ObjectId.isValid(userId)) {
-        throw new Error('Invalid user ID format');
-      }
 
-      // Get user with balance
+    async getPortfolioData(userId, range = '1M') {
+      if (!ObjectId.isValid(userId)) throw new Error('Invalid user ID format');
       const user = await User.findById(userId).select('balance').lean();
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      // Calculate date range
+      if (!user) throw new Error('User not found');
+  
       const dateRange = this.calculateDateRange(range);
-
-      // Get recent transactions
+  
+      // ✅ separate tx & trades
       const transactions = await Transaction.find({
         userId: new ObjectId(userId),
         createdAt: { $gte: dateRange },
-        status: 'completed' // Changed from 'FILLED' to match your Transaction model
-      })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .lean();
-
-      // Calculate holdings from positions
+        status: 'completed'
+      }).sort({ createdAt: -1 }).limit(5).lean();
+  
+      const trades = await Trade.find({
+        user: new ObjectId(userId),
+        createdAt: { $gte: dateRange }
+      }).sort({ createdAt: -1 }).limit(5).lean();
+  
       const holdings = await this.calculateHoldings(userId);
-
-      // Calculate portfolio metrics
       const totalValue = holdings.reduce((sum, h) => sum + h.currentValue, 0) + (user.balance || 0);
       const todayChange = await this.calculateDailyChange(userId, holdings);
-
+  
       return {
         totalValue,
         todayChange,
         unrealizedPL: holdings.reduce((sum, h) => sum + h.unrealizedPL, 0),
         holdings,
-        recentActivity: transactions.map(t => ({
-          description: `${t.type === 'trade' ? (t.side === 'BUY' ? 'Bought' : 'Sold') : t.type} ${t.symbol || ''}`,
-          amount: t.amount || (t.quantity * t.price || 0),
-          timestamp: t.createdAt
-        })),
+        recentActivity: [
+          ...transactions.map(t => ({
+            description: t.type,
+            amount: t.amount,
+            timestamp: t.createdAt
+          })),
+          ...trades.map(tr => ({
+            description: tr.side === 'BUY' ? `Bought ${tr.symbol}` : `Sold ${tr.symbol}`,
+            amount: tr.qty * tr.price,
+            timestamp: tr.createdAt
+          }))
+        ].sort((a, b) => b.timestamp - a.timestamp).slice(0, 5),
         cashBalance: user.balance || 0
       };
-
-    } catch (error) {
-      console.error('Error in portfolioService:', error);
-      throw error;
     }
-  }
+  
 
   calculateDateRange(range) {
     const now = new Date();
@@ -76,7 +70,7 @@ class PortfolioService {
   async calculateHoldings(userId) {
     try {
       // Get all positions for the user
-      const positions = await Position.find({ userId: new ObjectId(userId) }).lean();
+      const positions = await Position.find({ user: new ObjectId(userId) }).lean();
 
       // Get current prices for all positions
       const holdings = await Promise.all(positions.map(async (position) => {
@@ -90,7 +84,7 @@ class PortfolioService {
           return null;
         }
 
-        const currentPrice = latestCandle.c; // Closing price from latest candle
+        const currentPrice = latestCandle.c;
         const currentValue = position.qty * currentPrice;
         const unrealizedPL = currentValue - (position.avgPrice * position.qty);
         const unrealizedPLPercent = (position.avgPrice > 0) ? 
@@ -139,7 +133,7 @@ class PortfolioService {
 
           return {
             symbol: holding.symbol,
-            yesterdayPrice: candle ? candle.c : holding.currentPrice // Fallback to current if no history
+            yesterdayPrice: candle ? candle.c : holding.currentPrice
           };
         })
       );
@@ -174,7 +168,6 @@ class PortfolioService {
     }
   }
 
-  // Additional helper method to get portfolio history for charts
   async getPortfolioHistory(userId, range = '1M') {
     try {
       const dateRange = this.calculateDateRange(range);
@@ -269,5 +262,4 @@ class PortfolioService {
   }
 }
 
-// Export an instance of the service
 export default new PortfolioService();

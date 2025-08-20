@@ -16,8 +16,14 @@ export default function Dashboard() {
     recentActivity: [],
     cashBalance: 0
   })
+  const [marketData, setMarketData] = useState({
+    nifty50: { price: 0, change: 0, changePercent: 0 },
+    sensex: { price: 0, change: 0, changePercent: 0 },
+    niftyBank: { price: 0, change: 0, changePercent: 0 }
+  });
   const [isLoading, setIsLoading] = useState(true)
-  
+  const [error, setError] = useState(null);
+
   // Fetch real-time portfolio data
   useEffect(() => {
     const fetchPortfolioData = async () => {
@@ -46,11 +52,53 @@ export default function Dashboard() {
     }
   }, [timeRange, user?.id])
   
+
+  useEffect(() => {
+    fetchMarketData();
+    // Refresh market data every 30 seconds
+    const interval = setInterval(fetchMarketData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchMarketData = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      setMockData();
+      
+    } catch (error) {
+      console.error('Error fetching market data:', error);
+      setError('Failed to load market data');
+      setMockData(); // Fallback to mock data
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const setMockData = () => {
+    // Generate random fluctuations for demo purposes
+    const randomFluctuation = (baseValue, maxChangePercent) => {
+      const changePercent = (Math.random() - 0.5) * maxChangePercent;
+      const change = baseValue * (changePercent / 100);
+      return {
+        price: baseValue + change,
+        change: change,
+        changePercent: changePercent
+      };
+    };
+
+    setMarketData({
+      nifty50: randomFluctuation(21832, 1.5),
+      sensex: randomFluctuation(72102, 1.5),
+      niftyBank: randomFluctuation(46123, 2.0)
+    });
+  };
   // Format currency
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'INR'
     }).format(amount)
   }
 
@@ -58,7 +106,9 @@ export default function Dashboard() {
   const formatPercentage = (value) => {
     return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
   }
-
+  const getChangeColor = (value) => {
+    return value >= 0 ? 'text-green-600' : 'text-red-600';
+  };
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
@@ -200,26 +250,81 @@ export default function Dashboard() {
 
           {/* Secondary Content (Sidebar) */}
           <div className="space-y-6">
-            <div className="bg-white shadow rounded-lg p-6">
-              <h2 className="text-lg font-medium text-gray-900 mb-4">Market Overview</h2>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">S&P 500</span>
-                  <span className="text-green-600 font-medium">+1.25%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">NASDAQ</span>
-                  <span className="text-green-600 font-medium">+2.15%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">DOW</span>
-                  <span className="text-red-600 font-medium">-0.45%</span>
-                </div>
+          <div className="bg-white shadow rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-medium text-gray-900">Market Overview</h2>
+          <button
+            onClick={fetchMarketData}
+            disabled={isLoading}
+            className="text-blue-600 hover:text-blue-500 text-sm disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        </div>
+        
+        {error && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
+            <p className="text-yellow-800 text-sm">{error}</p>
+          </div>
+        )}
+        
+        <div className="space-y-3">
+          {isLoading ? (
+            // Loading skeleton
+            [...Array(3)].map((_, i) => (
+              <div key={i} className="flex justify-between items-center py-2">
+                <div className="animate-pulse h-4 w-20 bg-gray-200 rounded"></div>
+                <div className="animate-pulse h-4 w-16 bg-gray-200 rounded"></div>
               </div>
-              <Link to="/markets" className="text-blue-600 hover:text-blue-500 text-sm mt-4 inline-block">
-                View all markets
-              </Link>
-            </div>
+            ))
+          ) : (
+            <>
+              <div className="flex justify-between items-center py-2">
+                <div className="flex items-center space-x-2">
+                  <span className="text-gray-600 font-medium">Nifty 50</span>
+                  <span className="text-xs text-gray-400">
+                    {formatCurrency(marketData.nifty50.price)}
+                  </span>
+                </div>
+                <span className={`font-medium ${getChangeColor(marketData.nifty50.change)}`}>
+                  {formatPercentage(marketData.nifty50.changePercent)}
+                </span>
+              </div>
+              
+              <div className="flex justify-between items-center py-2">
+                <div className="flex items-center space-x-2">
+                  <span className="text-gray-600 font-medium">Sensex</span>
+                  <span className="text-xs text-gray-400">
+                    {formatCurrency(marketData.sensex.price)}
+                  </span>
+                </div>
+                <span className={`font-medium ${getChangeColor(marketData.sensex.change)}`}>
+                  {formatPercentage(marketData.sensex.changePercent)}
+                </span>
+              </div>
+              
+              <div className="flex justify-between items-center py-2">
+                <div className="flex items-center space-x-2">
+                  <span className="text-gray-600 font-medium">Bank Nifty</span>
+                  <span className="text-xs text-gray-400">
+                    {formatCurrency(marketData.niftyBank.price)}
+                  </span>
+                </div>
+                <span className={`font-medium ${getChangeColor(marketData.niftyBank.change)}`}>
+                  {formatPercentage(marketData.niftyBank.changePercent)}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+        
+        <Link 
+          to="/markets" 
+          className="text-blue-600 hover:text-blue-500 text-sm mt-4 inline-block"
+        >
+          View all markets →
+        </Link>
+      </div>
 
             <div className="bg-white shadow rounded-lg p-6">
               <h2 className="text-lg font-medium text-gray-900 mb-4">Portfolio Snapshot</h2>

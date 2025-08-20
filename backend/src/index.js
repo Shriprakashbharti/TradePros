@@ -37,6 +37,7 @@ import tradesRouter from './routes/trades.js';
 import portfolioRouter from './routes/portfolio.js';
 import adminRouter from './routes/admin.js';
 import transactionRoutes from './routes/transactions.js';
+import marketApiRouter from './routes/marketApi.js';
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', authRouter);
@@ -46,6 +47,7 @@ app.use('/api/trades', tradesRouter);
 app.use('/api/portfolio', portfolioRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/transactions', transactionRoutes)
+app.use('/api/marketapi',marketApiRouter);
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, { cors: { origin: process.env.CORS_ORIGIN || '*' } });

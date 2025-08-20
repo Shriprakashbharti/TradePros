@@ -9,7 +9,7 @@ const router = express.Router();
 // Get user positions
 router.get('/positions', authRequired, async (req, res) => {
   try {
-    const list = await Position.find({ userId: req.user.sub }).lean();
+    const list = await Position.find({ user: req.user.sub }).lean();
     res.json(list);
   } catch (error) {
     console.error('Error fetching positions:', error);
@@ -23,7 +23,7 @@ router.get('/positions', authRequired, async (req, res) => {
 // Get portfolio summary
 router.get('/summary', authRequired, async (req, res) => {
   try {
-    const list = await Position.find({ userId: req.user.sub }).lean();
+    const list = await Position.find({ user: req.user.sub }).lean();
     const totalUnrealized = list.reduce((a, p) => a + (p.unrealizedPnL || 0), 0);
     const totalRealized = list.reduce((a, p) => a + (p.realizedPnL || 0), 0);
     res.json({ 
@@ -44,7 +44,7 @@ router.get('/summary', authRequired, async (req, res) => {
 router.get('/', authRequired, async (req, res) => {
   try {
     const { range = '1M' } = req.query;
-    const userId = req.user.sub; // Get from authenticated user
+    const userId = req.user.sub;
 
     // Validate range parameter
     if (!['1D', '1W', '1M', '3M', '1Y', 'ALL'].includes(range)) {

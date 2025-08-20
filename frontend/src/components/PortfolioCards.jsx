@@ -34,7 +34,7 @@ export default function PortfolioCards({ holdings, summary, loading, error }) {
     totalValue: holdings?.reduce((sum, h) => sum + (h.currentValue || 0), 0) || 0,
     totalUnrealized: holdings?.reduce((sum, h) => sum + (h.unrealizedPL || 0), 0) || 0,
     positionsCount: holdings?.length || 0,
-    dayChange: 0 // This should come from parent component
+    dayChange: holdings?.reduce((sum, h) => sum + (h.dayChange || 0), 0) || 0
   }
 
   return (
