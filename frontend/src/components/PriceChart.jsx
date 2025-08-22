@@ -17,7 +17,7 @@ import { format } from 'date-fns'
 
 export default function PriceChart({ symbol }) {
   const { candles, loadCandles, tick } = useMarket()
-  const [timeframe, setTimeframe] = useState('1h')
+  const [timeframe, setTimeframe] = useState('1m')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
 

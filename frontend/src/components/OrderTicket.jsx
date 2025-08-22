@@ -6,7 +6,7 @@ import { useAuth } from '../store/auth'
 
 export default function OrderTicket() {
   const { instruments, symbol, tick } = useMarket()
-  const { user } = useAuth()
+  const { user, loadMe } = useAuth()
   const [form, setForm] = useState({ 
     symbol, 
     side: 'BUY', 
@@ -18,6 +18,20 @@ export default function OrderTicket() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState(null)
   const [lastPrice, setLastPrice] = useState(null)
+
+  // Load user data initially and set up interval to refresh every 5 seconds
+  useEffect(() => {
+    // Load immediately
+    loadMe()
+    
+    // Set up interval to refresh every 5 seconds
+    const interval = setInterval(() => {
+      loadMe()
+    }, 5000)
+    
+    // Clean up interval on component unmount
+    return () => clearInterval(interval)
+  }, [loadMe])
 
   // Update last price when tick changes
   useEffect(() => {
@@ -70,6 +84,10 @@ export default function OrderTicket() {
 
       await api.post('/api/orders', payload)
       setSubmitStatus({ success: true, message: 'Order submitted successfully' })
+      
+      // Refresh user data immediately after successful order
+      await loadMe()
+      
       // Reset form but keep side and type
       setForm(prev => ({ 
         ...prev, 
@@ -266,6 +284,10 @@ export default function OrderTicket() {
           <div className="flex justify-between">
             <span>Available Balance:</span>
             <span>₹{user?.balance?.toFixed(2) || '0.00'}</span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-400 mt-1">
+            <span>Auto-refreshing every 5s</span>
+            <span>Last update: {new Date().toLocaleTimeString()}</span>
           </div>
         </div>
       </div>
