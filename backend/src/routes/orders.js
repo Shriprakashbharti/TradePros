@@ -21,7 +21,6 @@ router.post("/", authRequired, async (req, res) => {
 
     });
     const { error, value } = schema.validate(req.body);
-    console.log("body data",value.price)
 
     if (error) return res.status(400).json({ message: error.message });
 

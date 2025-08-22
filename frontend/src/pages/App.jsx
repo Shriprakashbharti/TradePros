@@ -13,6 +13,8 @@ import { useEffect } from 'react'
 import DepositPage from '../components/DepositPage'
 import WithdrawPage from '../components/WithdrawPage'
 import Markets from './Market'
+import Profile from '../pages/Profile';
+
 function Protected({ children, role }) {
   const { user, loadMe } = useAuth()
   const location = useLocation()
@@ -35,6 +37,7 @@ export default function App() {
       <Route path="/deposit" element={<Protected><Layout><DepositPage /></Layout></Protected>} />
       <Route path="/portfolio" element={<Protected><Layout><Portfolio /></Layout></Protected>} />
       <Route path='/markets' element={<Protected><Layout><Markets/></Layout></Protected>}/>
+      <Route path="/profile" element={<Protected><Layout><Profile /></Layout></Protected>} />
       <Route path="/risk" element={<Protected><Layout><Risk /></Layout></Protected>} /> 
       <Route path="/admin" element={<Protected role="admin"><Layout><Admin /></Layout></Protected>} />
     </Routes>

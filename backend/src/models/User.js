@@ -20,6 +20,39 @@ const schema = new mongoose.Schema(
       type: Boolean,
       default: true, 
     },
+    profile: {
+      phone: { type: String },
+      address: {
+        street: String,
+        city: String,
+        state: String,
+        country: String,
+        pincode: String
+      },
+      panNumber: { type: String, uppercase: true },
+      aadhaarNumber: { type: String },
+      dateOfBirth: { type: Date },
+      bankAccounts: [{
+        accountNumber: String,
+        bankName: String,
+        ifscCode: String,
+        accountHolderName: String,
+        isPrimary: { type: Boolean, default: false }
+      }],
+      profileImage: { type: String }
+    },
+    preferences: {
+      notifications: {
+        email: { type: Boolean, default: true },
+        sms: { type: Boolean, default: false },
+        push: { type: Boolean, default: true }
+      },
+      riskProfile: {
+        type: String,
+        enum: ['conservative', 'moderate', 'aggressive'],
+        default: 'moderate'
+      }
+    },
     transactions: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Transaction'
@@ -27,6 +60,12 @@ const schema = new mongoose.Schema(
     orders: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Order'
+    }],
+    lastLogin: { type: Date },
+    loginHistory: [{
+      timestamp: { type: Date, default: Date.now },
+      ipAddress: String,
+      userAgent: String
     }]
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }
@@ -34,6 +73,28 @@ const schema = new mongoose.Schema(
 
 schema.index({ email: 1 }, { unique: true });
 
+// Virtual for available balance
+schema.virtual('availableBalance').get(function() {
+  return this.balance - this.reservedBalance;
+});
+
+// Method to update profile
+schema.methods.updateProfile = function(profileData) {
+  this.profile = { ...this.profile, ...profileData };
+  return this.save();
+};
+
+// Method to add bank account
+schema.methods.addBankAccount = function(bankAccountData) {
+  // If setting as primary, remove primary from others
+  if (bankAccountData.isPrimary) {
+    this.profile.bankAccounts.forEach(acc => {
+      acc.isPrimary = false;
+    });
+  }
+  
+  this.profile.bankAccounts.push(bankAccountData);
+  return this.save();
+};
+
 export default mongoose.model('User', schema);
-
-

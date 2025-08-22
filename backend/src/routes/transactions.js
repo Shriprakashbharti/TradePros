@@ -8,7 +8,8 @@ const router = express.Router()
 router.post('/deposit', async (req, res) => {
   try {
     const { userId, amount, method, reference } = req.body
-console.log(req.body)
+    const user = await User.findById(userId);
+
     // Validate input
     if (!userId || !amount || amount < 10) {
       return res.status(400).json({ message: 'Invalid deposit amount (minimum $10)' })
@@ -25,7 +26,8 @@ console.log(req.body)
     })
 
     await transaction.save()
-
+    user.transactions.push(transaction._id);
+    await user.save();
     // Update user balance if not manual deposit
     if (method !== 'manual_deposit') {
       await User.findByIdAndUpdate(userId, {
@@ -70,7 +72,8 @@ router.post('/withdraw', async (req, res) => {
     })
 
     await transaction.save()
-
+    user.transactions.push(transaction._id);
+    await user.save();
     // Reserve funds by deducting from available balance
     await User.findByIdAndUpdate(userId, {
       $inc: { balance: -amount },

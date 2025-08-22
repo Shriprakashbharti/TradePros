@@ -208,6 +208,8 @@ export async function submitOrder({ userId, symbol, side, type, price, qty }) {
     reservedAmount: side === 'BUY' ? requiredAmount : 0,
   });
 
+  user.orders.push(order._id);
+await user.save();
   // Try to match
   if (type === "MARKET") {
     order = await match(order, true);

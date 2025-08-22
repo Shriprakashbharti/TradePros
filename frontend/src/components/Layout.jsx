@@ -84,6 +84,9 @@ export default function Layout({ children }) {
                 <MobileNavItem to="/risk" icon={<ShieldExclamationIcon className="h-5 w-5" />}>
                   Risk
                 </MobileNavItem>
+                <MobileNavItem to="/profile" icon={<UserCircleIcon className="h-5 w-5" />}>
+                  My Profile
+                </MobileNavItem>
                 {user?.role === 'admin' && (
                   <MobileNavItem to="/admin" icon={<Cog6ToothIcon className="h-5 w-5" />}>
                     Admin
@@ -132,6 +135,9 @@ export default function Layout({ children }) {
             <DesktopNavItem to="/risk" icon={<ShieldExclamationIcon className="h-5 w-5" />}>
               Risk
             </DesktopNavItem>
+            <DesktopNavItem to="/profile" icon={<UserCircleIcon className="h-5 w-5" />}>
+                  My Profile
+                </DesktopNavItem>
             {user?.role === 'admin' && (
               <DesktopNavItem to="/admin" icon={<Cog6ToothIcon className="h-5 w-5" />}>
                 Admin
