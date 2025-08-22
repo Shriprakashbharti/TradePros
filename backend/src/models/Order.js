@@ -14,6 +14,11 @@ const schema = new mongoose.Schema(
     reservedQty:{
       type:Number,
       default:0
+    },
+    timeInForce: {
+      type: String,
+      enum: ["GTC", "IOC", "FOK"], // only these values are allowed
+      default: "GTC" // default value
     }
   },
   { timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } }

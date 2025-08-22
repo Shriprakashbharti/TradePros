@@ -34,7 +34,7 @@ export default function PriceChart({ symbol }) {
       }
     }
     fetchData()
-  }, [symbol, timeframe])
+  }, [symbol, timeframe, loadCandles])
 
   const formatChartData = () => {
     return candles.map(c => ({
@@ -79,7 +79,7 @@ export default function PriceChart({ symbol }) {
           <h3 className="font-semibold text-gray-800">{symbol}</h3>
           {latestPrice && (
             <div className="flex items-center space-x-2 mt-1">
-              <span className="text-xl font-bold">${latestPrice.toFixed(2)}</span>
+              <span className="text-xl font-bold">₹{latestPrice.toFixed(2)}</span>
               <span className={`text-sm ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {priceChange >= 0 ? '↑' : '↓'} {Math.abs(priceChange).toFixed(2)}%
               </span>
@@ -87,7 +87,7 @@ export default function PriceChart({ symbol }) {
           )}
         </div>
         <div className="flex space-x-2">
-          {['15m', '1h', '4h', '1d'].map((tf) => (
+          {['1m', '5m', '15m', '1h', '1d'].map((tf) => (
             <button
               key={tf}
               onClick={() => setTimeframe(tf)}

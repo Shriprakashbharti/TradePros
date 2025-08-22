@@ -3,6 +3,7 @@ import api from '../lib/api'
 import { useMarket } from '../store/market'
 import { ArrowUpIcon, ArrowDownIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '../store/auth'
+
 export default function OrderTicket() {
   const { instruments, symbol, tick } = useMarket()
   const { user } = useAuth()
@@ -42,12 +43,15 @@ export default function OrderTicket() {
       setSubmitStatus({ success: false, message: 'Please fill all required fields' })
       return
     }
-    const qty=Number(form.qty)
-    const actualBalance=user.balance;
-    if(actualBalance<(lastPrice*qty)) {
-      setSubmitStatus({success:false,message:'Not Enough Balance'})
+    
+    const qty = Number(form.qty)
+    const actualBalance = user?.balance || 0
+    
+    if (form.side === 'BUY' && actualBalance < (lastPrice * qty)) {
+      setSubmitStatus({ success: false, message: 'Not Enough Balance' })
       return
     }
+    
     setIsSubmitting(true)
     setSubmitStatus(null)
 
@@ -57,10 +61,10 @@ export default function OrderTicket() {
         side: form.side, 
         type: form.type, 
         qty: Number(form.qty),
+        timeInForce: form.tif
       }
       
       if (form.type === 'LIMIT') {
-        
         payload.price = Number(form.price)
       }
 
@@ -83,9 +87,15 @@ export default function OrderTicket() {
   }
 
   const handleQuickQty = (percent) => {
-    if (!lastPrice) return
-    const maxQty = 1000 // This should come from available balance in a real app
-    setForm(prev => ({ ...prev, qty: Math.floor(maxQty * percent) }))
+    if (!lastPrice || !user?.balance) return
+    
+    if (form.side === 'BUY') {
+      const maxQty = Math.floor(user.balance / lastPrice)
+      setForm(prev => ({ ...prev, qty: Math.floor(maxQty * percent) }))
+    } else {
+      // For sell orders, you would use available holdings instead of balance
+      setForm(prev => ({ ...prev, qty: Math.floor(prev.qty * percent) }))
+    }
   }
 
   return (
@@ -165,10 +175,8 @@ export default function OrderTicket() {
                 min="0"
               />
               {lastPrice && (
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <span className="text-gray-500 text-sm">
-                    Last: {lastPrice.toFixed(2)}
-                  </span>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  <span className="text-gray-500 text-sm">Last: {lastPrice}</span>
                 </div>
               )}
             </div>
@@ -180,19 +188,19 @@ export default function OrderTicket() {
           <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
           <input
             type="number"
-            className="block w-full border-gray-300 rounded-md focus:border-indigo-500 focus:ring-indigo-500"
-            placeholder="0"
+            className="block w-full border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
             value={form.qty}
             onChange={(e) => setForm({...form, qty: e.target.value})}
             min="1"
-            step="1"
           />
-          <div className="flex space-x-2 mt-2">
-            {[0.25, 0.5, 0.75, 1].map(percent => (
+          
+          {/* Quick Quantity Buttons */}
+          <div className="grid grid-cols-4 gap-2 mt-2">
+            {[0.25, 0.5, 0.75, 1].map((percent) => (
               <button
                 key={percent}
                 type="button"
-                className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded"
+                className="text-xs py-1 px-2 bg-gray-100 hover:bg-gray-200 rounded-md"
                 onClick={() => handleQuickQty(percent)}
               >
                 {percent * 100}%
@@ -204,46 +212,62 @@ export default function OrderTicket() {
         {/* Time in Force */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Time in Force</label>
-          <select
+          <select 
             className="w-full border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-            value={form.tif}
+            value={form.tif} 
             onChange={(e) => setForm({...form, tif: e.target.value})}
           >
-            <option value="GTC">Good Till Cancel</option>
-            <option value="IOC">Immediate or Cancel</option>
-            <option value="FOK">Fill or Kill</option>
+            <option value="GTC">Good Till Cancel (GTC)</option>
+            <option value="IOC">Immediate or Cancel (IOC)</option>
+            <option value="FOK">Fill or Kill (FOK)</option>
           </select>
         </div>
 
         {/* Submit Button */}
         <button
-          className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${form.side === 'BUY' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} focus:outline-none focus:ring-2 focus:ring-offset-2 ${form.side === 'BUY' ? 'focus:ring-green-500' : 'focus:ring-red-500'}`}
+          type="button"
           onClick={handleSubmit}
           disabled={isSubmitting}
+          className={`w-full py-3 px-4 rounded-md text-white font-medium ${
+            form.side === 'BUY' 
+              ? 'bg-green-600 hover:bg-green-700' 
+              : 'bg-red-600 hover:bg-red-700'
+          } focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+            form.side === 'BUY' ? 'focus:ring-green-500' : 'focus:ring-red-500'
+          } disabled:opacity-50`}
         >
-          {isSubmitting ? (
-            'Submitting...'
-          ) : (
-            <>
-              {form.side === 'BUY' ? 'Buy' : 'Sell'} {form.symbol}
-              {form.type === 'LIMIT' && ` @ ${form.price || 'Limit'}`}
-            </>
-          )}
+          {isSubmitting ? 'Submitting...' : `${form.side} ${form.symbol}`}
         </button>
 
         {/* Status Message */}
         {submitStatus && (
-          <div className={`p-3 rounded-md ${submitStatus.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+          <div className={`p-3 rounded-md ${
+            submitStatus.success 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-red-100 text-red-800'
+          }`}>
             <div className="flex items-center">
               {submitStatus.success ? (
-                <CheckIcon className="h-5 w-5 mr-2 text-green-500" />
+                <CheckIcon className="h-5 w-5 mr-2" />
               ) : (
-                <XMarkIcon className="h-5 w-5 mr-2 text-red-500" />
+                <XMarkIcon className="h-5 w-5 mr-2" />
               )}
-              <span>{submitStatus.message}</span>
+              {submitStatus.message}
             </div>
           </div>
         )}
+
+        {/* Order Summary */}
+        <div className="text-sm text-gray-600">
+          <div className="flex justify-between">
+            <span>Estimated Cost:</span>
+            <span>₹{(lastPrice * form.qty).toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Available Balance:</span>
+            <span>₹{user?.balance?.toFixed(2) || '0.00'}</span>
+          </div>
+        </div>
       </div>
     </div>
   )

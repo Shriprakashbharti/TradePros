@@ -111,9 +111,9 @@ export default function RecentTrades({ symbol }) {
                       {t.side}
                     </span>
                   </td>
-                  <td className="px-4 py-2 whitespace-nowrap text-sm text-right font-medium ${
+                  <td className={`px-4 py-2 whitespace-nowrap text-sm text-right font-medium ${
                     t.side.toLowerCase() === 'buy' ? 'text-green-600' : 'text-red-600'
-                  }">
+                  }`}>
                     {formatPrice(t.price)}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-500">

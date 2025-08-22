@@ -17,6 +17,8 @@ router.post("/", authRequired, async (req, res) => {
       type: Joi.string().valid("MARKET", "LIMIT").required(),
       price: Joi.number().min(0).optional(),
       qty: Joi.number().min(1).required(),
+      timeInForce: Joi.string().valid("GTC", "IOC", "FOK").default("GTC")
+
     });
     const { error, value } = schema.validate(req.body);
     console.log("body data",value.price)
