@@ -9,13 +9,74 @@ import {
   Cog6ToothIcon,
   BellIcon,
   ArrowLeftOnRectangleIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSocket } from '../contexts/SocketContext';
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth()
+  const { socket } = useSocket()
   const navigate = useNavigate()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [notificationOpen, setNotificationOpen] = useState(false)
+
+  useEffect(() => {
+    if (!socket || !user) return;
+
+    // Order updates
+    socket.on('orders:updated', (data) => {
+      const notification = {
+        id: Date.now(),
+        type: 'order',
+        title: `Order ${data.status}`,
+        message: `${data.side} ${data.symbol} - ${data.filledQty}/${data.qty} filled`,
+        read: false,
+        timestamp: new Date()
+      };
+      setNotifications(prev => [notification, ...prev.slice(0, 19)]);
+      setUnreadCount(prev => prev + 1);
+    });
+
+    // Trade executions
+    socket.on('trades:updated', (data) => {
+      const notification = {
+        id: Date.now(),
+        type: 'trade',
+        title: 'Trade Executed',
+        message: `${data.side} ${data.qty} ${data.symbol} @ ₹${data.price}`,
+        read: false,
+        timestamp: new Date()
+      };
+      setNotifications(prev => [notification, ...prev.slice(0, 19)]);
+      setUnreadCount(prev => prev + 1);
+    });
+
+    return () => {
+      socket.off('orders:updated');
+      socket.off('trades:updated');
+    };
+  }, [socket, user]);
+
+  const markAsRead = (id) => {
+    setNotifications(prev => 
+      prev.map(n => n.id === id ? { ...n, read: true } : n)
+    );
+    setUnreadCount(prev => Math.max(0, prev - 1));
+  };
+
+  const markAllAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
+  };
+
+  const clearAllNotifications = () => {
+    setNotifications([]);
+    setUnreadCount(0);
+  };
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-gray-50">
@@ -34,10 +95,76 @@ export default function Layout({ children }) {
         </div>
         {user ? (
           <div className="flex items-center space-x-2">
-            <button className="p-1 rounded-full hover:bg-gray-100 relative">
-              <BellIcon className="h-5 w-5 text-gray-500" />
-              <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500"></span>
-            </button>
+            {/* Notification Bell for Mobile */}
+            <div className="relative">
+              <button 
+                onClick={() => setNotificationOpen(!notificationOpen)}
+                className="p-1 rounded-full hover:bg-gray-100 relative"
+              >
+                <BellIcon className="h-5 w-5 text-gray-500" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500"></span>
+                )}
+              </button>
+              
+              {/* Mobile Notification Dropdown */}
+              {notificationOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                  <div className="p-4 border-b border-gray-200">
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-semibold">Notifications</h3>
+                      <div className="flex space-x-2">
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="text-sm text-blue-600 hover:text-blue-800"
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                        <button
+                          onClick={clearAllNotifications}
+                          className="text-sm text-gray-500 hover:text-gray-700"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500">
+                        No notifications
+                      </div>
+                    ) : (
+                      notifications.map((notification) => (
+                        <div
+                          key={notification.id}
+                          className={`p-4 border-b border-gray-100 ${
+                            !notification.read ? 'bg-blue-50' : ''
+                          }`}
+                          onClick={() => markAsRead(notification.id)}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <h4 className="font-medium text-sm">{notification.title}</h4>
+                              <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {notification.timestamp.toLocaleTimeString()}
+                              </p>
+                            </div>
+                            {!notification.read && (
+                              <div className="h-2 w-2 rounded-full bg-blue-500 ml-2 mt-1"></div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-medium">
               {user.name.charAt(0).toUpperCase()}
             </div>
@@ -62,9 +189,7 @@ export default function Layout({ children }) {
                 onClick={() => setMobileMenuOpen(false)}
                 className="p-1 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100"
               >
-                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto">
@@ -136,8 +261,8 @@ export default function Layout({ children }) {
               Risk
             </DesktopNavItem>
             <DesktopNavItem to="/profile" icon={<UserCircleIcon className="h-5 w-5" />}>
-                  My Profile
-                </DesktopNavItem>
+              My Profile
+            </DesktopNavItem>
             {user?.role === 'admin' && (
               <DesktopNavItem to="/admin" icon={<Cog6ToothIcon className="h-5 w-5" />}>
                 Admin
@@ -177,10 +302,75 @@ export default function Layout({ children }) {
           </div>
           
           <div className="flex items-center space-x-4">
-            <button className="p-2 rounded-full hover:bg-gray-100 relative">
-              <BellIcon className="h-5 w-5 text-gray-500" />
-              <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500"></span>
-            </button>
+            {/* Notification Bell for Desktop */}
+            <div className="relative">
+              <button 
+                onClick={() => setNotificationOpen(!notificationOpen)}
+                className="p-2 rounded-full hover:bg-gray-100 relative"
+              >
+                <BellIcon className="h-5 w-5 text-gray-500" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500"></span>
+                )}
+              </button>
+              
+              {/* Desktop Notification Dropdown */}
+              {notificationOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                  <div className="p-4 border-b border-gray-200">
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-semibold">Notifications</h3>
+                      <div className="flex space-x-2">
+                        {unreadCount > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="text-sm text-blue-600 hover:text-blue-800"
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                        <button
+                          onClick={clearAllNotifications}
+                          className="text-sm text-gray-500 hover:text-gray-700"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500">
+                        No notifications
+                      </div>
+                    ) : (
+                      notifications.map((notification) => (
+                        <div
+                          key={notification.id}
+                          className={`p-4 border-b border-gray-100 ${
+                            !notification.read ? 'bg-blue-50' : ''
+                          }`}
+                          onClick={() => markAsRead(notification.id)}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <h4 className="font-medium text-sm">{notification.title}</h4>
+                              <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {notification.timestamp.toLocaleTimeString()}
+                              </p>
+                            </div>
+                            {!notification.read && (
+                              <div className="h-2 w-2 rounded-full bg-blue-500 ml-2 mt-1"></div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             
             {user ? (
               <div className="flex items-center space-x-3">

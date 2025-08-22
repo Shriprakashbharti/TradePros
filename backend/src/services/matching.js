@@ -58,7 +58,7 @@ async function applyBuyFillAdjustments(user, order, execPrice, execQty) {
 
   // Reduce global reserved by the spent part of THIS order
   const releaseSpent = Math.min(spent, Math.max(0, user.reservedBalance));
-  user.reservedBalance -= releaseSpent;
+    user.reservedBalance -= releaseSpent;
 
   // Reduce per-order hold
   order.reservedAmount = Math.max(0, (order.reservedAmount || 0) - spent);
@@ -164,17 +164,24 @@ async function fill(order, price, qty) {
   await Instrument.updateOne({ symbol: order.symbol }, { $set: { lastPrice: price } });
 
   // 6) Notify the user whose order was filled
-  ws.to(`user:${order.user.toString()}`).emit('trades:updated', trade.toObject());
-  
-  // 7) Also notify for order update
-  ws.to(`user:${order.user.toString()}`).emit('orders:updated', {
-    orderId: order._id,
-    status: order.status,
-    filledQty: order.filledQty,
-    price: order.price,
-    symbol: order.symbol,
-    side: order.side
-  });
+  if (ws) {
+    ws.to(`user:${order.user.toString()}`).emit('trades:updated', trade.toObject());
+    
+    // 7) Also notify for order update
+    ws.to(`user:${order.user.toString()}`).emit('orders:updated', {
+      orderId: order._id,
+      status: order.status,
+      filledQty: order.filledQty,
+      qty: order.qty,
+      price: price,
+      symbol: order.symbol,
+      side: order.side,
+      timestamp: new Date()
+    });
+
+    // 8) Broadcast orderbook update
+    ws.to(`symbol:${order.symbol}`).emit(`market:orderbook:${order.symbol}`, obSnapshot(order.symbol));
+  }
 
   console.log('FILL COMPLETED:', {
     orderId: order._id.toString(),
@@ -183,7 +190,10 @@ async function fill(order, price, qty) {
     qty: qty,
     status: order.status
   });
+
+  return trade;
 }
+
 /** --- PUBLIC API --- **/
 
 export async function submitOrder({ userId, symbol, side, type, price, qty }) {
@@ -194,7 +204,7 @@ export async function submitOrder({ userId, symbol, side, type, price, qty }) {
   if (type === "MARKET") {
     const inst = await Instrument.findOne({ symbol });
     if (!inst) throw new Error("Instrument not found");
-    price = inst.lastPrice; // must be present; update on each trade in fill()
+    price = inst.lastPrice;
   }
 
   price = Number(price);
@@ -206,21 +216,16 @@ export async function submitOrder({ userId, symbol, side, type, price, qty }) {
 
   if (side === "BUY") {
     if (user.balance < requiredAmount) throw new Error("Insufficient balance");
-    // Move funds from balance → global reserved; also record per-order hold
     user.balance -= requiredAmount;
     user.reservedBalance += requiredAmount;
     await user.save();
   } else {
-    // SELL: lock shares in reservedQty
     const pos = await Position.findOne({ user: userId, symbol });
     if (!pos || pos.qty - pos.reservedQty < qty) throw new Error("Insufficient available shares to sell");
-  
     pos.reservedQty += qty;
     await pos.save();
   }
-  
 
-  // Create order (include per-order hold for BUY)
   let order = await Order.create({
     user: userId,
     symbol,
@@ -236,18 +241,6 @@ export async function submitOrder({ userId, symbol, side, type, price, qty }) {
   user.orders.push(order._id);
   await user.save();
 
-  // DEBUG: Log order creation
-  console.log('ORDER CREATED:', {
-    orderId: order._id.toString(),
-    userId: userId,
-    symbol: symbol,
-    side: side,
-    type: type,
-    price: price,
-    qty: qty
-  });
-
-  // Try to match
   if (type === "MARKET") {
     order = await match(order, true);
   } else {
@@ -257,31 +250,33 @@ export async function submitOrder({ userId, symbol, side, type, price, qty }) {
     }
   }
 
-  // Finalize status consistency
   if (order.filledQty === 0) order.status = "OPEN";
   else if (order.filledQty < order.qty) order.status = "PARTIAL";
   else order.status = "FILLED";
   await order.save();
 
-  // DEBUG: Log final order status
-  console.log('ORDER FINAL STATUS:', {
-    orderId: order._id.toString(),
-    status: order.status,
-    filledQty: order.filledQty,
-    price: order.price
-  });
-
-  // Emit updates
-  ws.to(`user:${userId}`).emit("orders:updated", {
-    orderId: order._id,
-    status: order.status,
-    filledQty: order.filledQty,
-    price: order.price, // Include price in the update
-    symbol: order.symbol,
-    side: order.side
-  });
-  
-  ws.to(`symbol:${symbol}`).emit(`market:orderbook:${symbol}`, obSnapshot(symbol));
+  // EMIT ORDER UPDATES - YEH ADD KIYA HAI
+  if (ws) {
+    ws.to(`user:${userId}`).emit("orders:updated", {
+      orderId: order._id,
+      status: order.status,
+      filledQty: order.filledQty,
+      price: order.price,
+      qty: order.qty,
+      symbol: order.symbol,
+      side: order.side,
+      timestamp: new Date()
+    });
+    
+    ws.to(`symbol:${symbol}`).emit(`market:orderbook:${symbol}`, obSnapshot(symbol));
+    
+    if (order.filledQty > 0) {
+      const trades = await Trade.find({ order: order._id });
+      trades.forEach(trade => {
+        ws.to(`user:${userId}`).emit('trades:updated', trade.toObject());
+      });
+    }
+  }
 
   return order.toObject();
 }
@@ -293,8 +288,6 @@ export async function cancelOrderById(id, userId) {
   order.status = 'CANCELLED';
   await order.save();
 
-  
-  // Refund any leftover per-order reservation for BUY
   if (order.side === 'BUY' && order.reservedAmount > 0) {
     const user = await User.findById(userId);
     if (user) {
@@ -305,7 +298,7 @@ export async function cancelOrderById(id, userId) {
     }
     order.reservedAmount = 0;
     await order.save();
-  }else if (order.side === 'SELL') {
+  } else if (order.side === 'SELL') {
     const pos = await Position.findOne({ user: userId, symbol: order.symbol });
     if (pos) {
       pos.reservedQty = Math.max(0, pos.reservedQty - (order.qty - order.filledQty));
@@ -314,8 +307,20 @@ export async function cancelOrderById(id, userId) {
   }
 
   removeFromBook(order.symbol, order._id);
-  ws.to(`user:${userId}`).emit('orders:updated', { orderId: id, status: 'CANCELLED' });
-  ws.to(`symbol:${order.symbol}`).emit(`market:orderbook:${order.symbol}`, obSnapshot(order.symbol));
+
+  // EMIT CANCELLATION NOTIFICATION - YEH ADD KIYA HAI
+  if (ws) {
+    ws.to(`user:${userId}`).emit('orders:updated', { 
+      orderId: id, 
+      status: 'CANCELLED',
+      symbol: order.symbol,
+      side: order.side,
+      timestamp: new Date()
+    });
+    
+    ws.to(`symbol:${order.symbol}`).emit(`market:orderbook:${order.symbol}`, obSnapshot(order.symbol));
+  }
+
   return true;
 }
 
@@ -334,51 +339,35 @@ async function match(order, isMarket) {
     const contraList = order.side === 'BUY' ? book.sells : book.buys;
     let remaining = order.qty - order.filledQty;
 
-    console.log('CONTRALIST LENGTH:', contraList.length);
-    console.log('CONTRALIST:', contraList.map(o => ({
-      id: o._id.toString(),
-      side: o.side,
-      price: o.price,
-      qty: o.qty,
-      filled: o.filledQty
-    })));
-    
     for (let i = 0; i < contraList.length && remaining > 0; i++) {
       const contra = contraList[i];
-      
-      console.log('CHECKING CONTRA:', {
-        contraId: contra._id.toString(),
-        contraSide: contra.side,
-        contraPrice: contra.price,
-        contraQty: contra.qty,
-        contraFilled: contra.filledQty
-      });
 
       const priceOk = isMarket || (order.side === 'BUY' ? order.price >= contra.price : order.price <= contra.price);
-      
-      console.log('PRICE OK:', priceOk, 'Order price:', order.price, 'Contra price:', contra.price);
-      
-      if (!priceOk) {
-        console.log('PRICE NOT OK - BREAKING');
-        break;
-      }
+      if (!priceOk) break;
 
       const avail = contra.qty - contra.filledQty;
       const tQty = Math.min(remaining, avail);
-      
-      // FIX: Use the contra order's price for the execution (not the incoming order's price)
-      const tPrice = contra.price; // This is the key fix - use the contra order's price
-      
-      console.log('EXECUTING TRADE:', {
-        tPrice: tPrice,
-        tQty: tQty,
-        orderSide: order.side,
-        contraSide: contra.side
-      });
+      const tPrice = contra.price;
 
-      // Fill BOTH orders (the incoming order and the contra order)
-      await fill(order, tPrice, tQty);
-      await fill(contra, tPrice, tQty); // This is the missing part!
+      const trade1 = await fill(order, tPrice, tQty);
+      const trade2 = await fill(contra, tPrice, tQty);
+
+      // EMIT CONTRA TRADE NOTIFICATIONS - YEH ADD KIYA HAI
+      if (trade1 && trade2 && ws) {
+        ws.to(`user:${order.user.toString()}`).emit('contra-trade', {
+          contraOrderId: contra._id,
+          price: tPrice,
+          qty: tQty,
+          side: contra.side
+        });
+        
+        ws.to(`user:${contra.user.toString()}`).emit('contra-trade', {
+          contraOrderId: order._id,
+          price: tPrice,
+          qty: tQty,
+          side: order.side
+        });
+      }
 
       contra.filledQty += tQty;
       contra.status = contra.filledQty >= contra.qty ? 'FILLED' : 'PARTIAL';
@@ -387,7 +376,6 @@ async function match(order, isMarket) {
       remaining = order.qty - order.filledQty;
 
       if (contra.status === 'FILLED') {
-        console.log('REMOVING FILLED CONTRA ORDER:', contra._id.toString());
         removeFromBook(order.symbol, contra._id);
         i--;
       }
@@ -395,21 +383,11 @@ async function match(order, isMarket) {
 
     if (!isMarket && order.status !== 'FILLED') {
       const sideList = order.side === 'BUY' ? book.buys : book.sells;
-      if (!sideList.find((o) => o._id.toString() === order._id.toString())) {
-        console.log('ADDING ORDER TO BOOK:', order._id.toString());
-        addToBook(order);
-      }
+      if (!sideList.find((o) => o._id.toString() === order._id.toString())) addToBook(order);
     } else if (isMarket && order.status !== 'FILLED') {
       order.status = order.filledQty > 0 ? 'PARTIAL' : 'CANCELLED';
       await order.save();
-      console.log('MARKET ORDER FINAL STATUS:', order.status);
     }
-
-    console.log('MATCHING COMPLETE:', {
-      orderId: order._id.toString(),
-      finalStatus: order.status,
-      filledQty: order.filledQty
-    });
 
     return order;
   } catch (error) {
